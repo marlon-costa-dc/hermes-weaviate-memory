@@ -1,0 +1,7 @@
+name: weaviate-memory
+version: 0.1.0
+description: "Weaviate — layered agent memory: a collection per domain, a tenant per user, admin_list or RBAC. Local Ollama embeddings."
+pip_dependencies:
+  - weaviate-client>=4.22,<5
+requires_env:
+  - WEAVIATE_MEMORY_API_KEY

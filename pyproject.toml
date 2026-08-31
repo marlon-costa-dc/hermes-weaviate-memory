@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-weaviate-memory"
+version = "0.1.0"
+description = "Layered Weaviate memory provider for Hermes Agent — collection per domain, tenant per user, admin_list or RBAC"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Marlon Costa", email = "marlon.costa@datacosmos.com.br" }]
+keywords = [
+    "hermes",
+    "agent",
+    "memory",
+    "weaviate",
+    "vector-database",
+    "rag",
+    "ollama",
+    "mcp",
+    "multi-tenancy",
+    "rbac",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["weaviate-client>=4.22,<5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/marlon-costa-dc/hermes-weaviate-memory"
+Issues = "https://github.com/marlon-costa-dc/hermes-weaviate-memory/issues"
+
+# Discovered by Hermes' entry-point provider loader, as an alternative to
+# copying the package into $HERMES_HOME/plugins/.
+[project.entry-points."hermes_agent.memory_providers"]
+weaviate-memory = "weaviate_memory"
+
+[tool.setuptools]
+packages = ["weaviate_memory"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "error::DeprecationWarning",
+    # weaviate-client 4.23 imports authlib, which warns about its own httpx
+    # shim. Not ours to fix and not worth failing a build over.
+    "ignore::DeprecationWarning:authlib.*",
+    "ignore:.*httpx module is deprecated.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",  # long lines are prose in docstrings
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # sys.path juggling must precede imports
+# conftest mirrors the host's real ABC, where these hooks are deliberately
+# non-abstract (a provider overrides only what it needs). Marking them
+# abstract would make the stub diverge from what it stands in for.
+"tests/conftest.py" = ["E402", "B027"]

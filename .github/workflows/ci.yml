@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      # Unit and contract tests only: integration needs a live Weaviate and
+      # Ollama, and skips rather than passes when they are absent.
+      - name: Unit and contract tests
+        run: pytest tests/test_unit.py tests/test_contract.py -v
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      weaviate:
+        image: cr.weaviate.io/semitechnologies/weaviate:1.30.0
+        ports:
+          - 8080:8080
+          - 50051:50051
+        env:
+          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
+          AUTHENTICATION_APIKEY_ENABLED: "true"
+          AUTHENTICATION_APIKEY_ALLOWED_KEYS: ci-test-key
+          AUTHENTICATION_APIKEY_USERS: ci-user
+          AUTHORIZATION_ADMINLIST_ENABLED: "true"
+          AUTHORIZATION_ADMINLIST_USERS: ci-user
+          PERSISTENCE_DATA_PATH: /var/lib/weaviate
+          DEFAULT_VECTORIZER_MODULE: none
+          DISABLE_TELEMETRY: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      - name: Start Ollama and pull the embedding model
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:11434/api/tags > /dev/null && break
+            sleep 2
+          done
+          ollama pull nomic-embed-text
+
+      - name: Wait for Weaviate
+        run: |
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H 'Authorization: Bearer ci-test-key' \
+              http://127.0.0.1:8080/v1/.well-known/ready || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 2
+          done
+          echo "Weaviate did not become ready" >&2
+          exit 1
+
+      - name: Integration tests
+        env:
+          WEAVIATE_IT: "1"
+          WEAVIATE_MEMORY_HTTP_HOST: 127.0.0.1
+          WEAVIATE_MEMORY_HTTP_PORT: "8080"
+          WEAVIATE_MEMORY_GRPC_PORT: "50051"
+          WEAVIATE_MEMORY_USE_GRPC: "1"
+          WEAVIATE_MEMORY_API_KEY: ci-test-key
+        run: pytest tests/test_integration.py -v -s
