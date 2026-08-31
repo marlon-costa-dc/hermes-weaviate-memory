@@ -400,9 +400,7 @@ def test_permission_errors_are_typed_not_generic(store, config, embedder):
     client.roles.create(
         role_name=role,
         permissions=[
-            Permissions.collections(
-                collection=f"{config.collection_prefix}*", read_config=True
-            ),
+            Permissions.collections(collection=f"{config.collection_prefix}*", read_config=True),
             Permissions.data(collection=f"{config.collection_prefix}*", read=True),
         ],
     )
