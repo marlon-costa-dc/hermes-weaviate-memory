@@ -44,17 +44,19 @@ jobs:
     runs-on: ubuntu-latest
     services:
       weaviate:
-        image: cr.weaviate.io/semitechnologies/weaviate:1.30.0
+        image: cr.weaviate.io/semitechnologies/weaviate:1.39.0
         ports:
           - 8080:8080
           - 50051:50051
         env:
           AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
           AUTHENTICATION_APIKEY_ENABLED: "true"
-          AUTHENTICATION_APIKEY_ALLOWED_KEYS: ci-test-key
-          AUTHENTICATION_APIKEY_USERS: ci-user
-          AUTHORIZATION_ADMINLIST_ENABLED: "true"
-          AUTHORIZATION_ADMINLIST_USERS: ci-user
+          AUTHENTICATION_APIKEY_ALLOWED_KEYS: ci-root-key,ci-reader-key
+          AUTHENTICATION_APIKEY_USERS: ci-root-user,ci-reader-user
+          AUTHENTICATION_DB_USERS_ENABLED: "true"
+          # RBAC on, so the denial guard test actually runs instead of skipping.
+          AUTHORIZATION_RBAC_ENABLED: "true"
+          AUTHORIZATION_RBAC_ROOT_USERS: ci-root-user
           PERSISTENCE_DATA_PATH: /var/lib/weaviate
           DEFAULT_VECTORIZER_MODULE: none
           DISABLE_TELEMETRY: "true"
@@ -85,7 +87,7 @@ jobs:
         run: |
           for _ in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
-              -H 'Authorization: Bearer ci-test-key' \
+              -H 'Authorization: Bearer ci-root-key' \
               http://127.0.0.1:8080/v1/.well-known/ready || true)
             [ "$code" = "200" ] && exit 0
             sleep 2
@@ -100,5 +102,8 @@ jobs:
           WEAVIATE_MEMORY_HTTP_PORT: "8080"
           WEAVIATE_MEMORY_GRPC_PORT: "50051"
           WEAVIATE_MEMORY_USE_GRPC: "1"
-          WEAVIATE_MEMORY_API_KEY: ci-test-key
+          WEAVIATE_MEMORY_API_KEY: ci-root-key
+          # Second identity so the RBAC denial guard runs for real.
+          WEAVIATE_IT_RESTRICTED_KEY: ci-reader-key
+          WEAVIATE_IT_RESTRICTED_USER: ci-reader-user
         run: pytest tests/test_integration.py -v -s

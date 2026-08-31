@@ -206,9 +206,37 @@ pytest tests/test_integration.py -v -s
 Each run uses a unique collection prefix and deletes it in teardown, so it
 leaves the cluster as it found it.
 
+The RBAC denial test needs a second, non-root key to prove a real 403:
+
+```bash
+export WEAVIATE_IT_RESTRICTED_KEY=...          # a different API key
+export WEAVIATE_IT_RESTRICTED_USER=reader-user # its user, if not the default
+```
+
+It provisions its own scoped role, verifies the identity can read what it is
+allowed to *and* is denied what it is not, then removes the role. Without those
+variables it skips — on an `admin_list` server there are no denials to observe.
+
 `test_contract.py` asserts the provider satisfies Hermes' **real**
 `MemoryProvider` ABC, and skips when only the bundled stub is available — a
 stub can only prove the provider matches the stub.
+
+### Reproducing the findings
+
+[docs/VERIFICATION.md](docs/VERIFICATION.md) records every measured claim —
+the vectorizer/MCP limitation, RBAC denial typing, and the version facts read
+from Weaviate's Go source — with the exact commands and outputs.
+`tests/lab.env` plus the ad-hoc `tests/_probe_*.py` scripts reproduce them
+against a disposable local container:
+
+```bash
+docker run -d --name wv-lab --network host --env-file tests/lab.env \
+  cr.weaviate.io/semitechnologies/weaviate:1.39.0 \
+  --host 0.0.0.0 --port 18090 --scheme http
+
+python tests/_probe_vectorizer.py   # BYO vectors vs text2vec-ollama
+python tests/_probe_mcp.py          # the same, through the MCP protocol
+```
 
 ## License
 

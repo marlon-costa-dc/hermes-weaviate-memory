@@ -121,17 +121,34 @@ one — it talks to the REST and gRPC APIs directly. MCP is additive.
 The MCP search tools take a **query string**, not a vector. On a collection
 created with `vectorizer: none` (this plugin's default, and what
 `self_provided()` produces) Weaviate has no way to embed that string.
-Measured against 1.30.0:
+
+Measured through the MCP protocol itself against Weaviate 1.39.0 —
+`tools/call` on `weaviate-query-hybrid`:
 
 ```
-col.query.hybrid(query='which linux distribution')
-→ WeaviateQueryError: VectorFromInput was called without vectorizer
-                      on class ProbeByoVec for input which linux distribution
+collection with vectorizer: none
+  → tool execution failed: failed to execute hybrid search:
+    VectorFromInput was called without vectorizer on class McpByo
+
+collection with text2vec-ollama
+  → {"results":[{"_additional":{"score":0.0125,...},"content":"The oper...
 ```
 
-BM25 on the same collection works. So with self-provided vectors, **MCP is
+BM25 on the same BYO collection works. So with self-provided vectors, **MCP is
 limited to keyword search** — the semantic half is unavailable, which is
-usually the entire reason for reaching for a vector database.
+usually the entire reason for reaching for a vector database. Full log:
+[VERIFICATION.md](VERIFICATION.md).
+
+### Tools actually exposed
+
+With `MCP_SERVER_WRITE_ACCESS_ENABLED=false`, three read-only tools (listed
+via `tools/list` on 1.39.0):
+
+| Tool | Purpose |
+|---|---|
+| `weaviate-collections-get-config` | Retrieves collection configuration(s) |
+| `weaviate-query-hybrid` | Hybrid search (vector + keyword) in a collection |
+| `weaviate-tenants-list` | Lists a collection's tenants |
 
 ### Making MCP semantic: a server-side vectorizer
 

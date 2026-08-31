@@ -358,10 +358,88 @@ def test_system_prompt_reports_real_counts(provider):
 def test_permission_errors_are_typed_not_generic(store, config, embedder):
     """Under RBAC, a denial must be PermissionDeniedError so recall can skip it.
 
-    On an admin_list server nothing is denied, so the test asserts the
-    classifier instead of forcing a 403 that cannot happen there.
+    Provisions its own restricted identity rather than relying on one existing:
+    a role scoped to this run's collection prefix, assigned to a second API-key
+    user, then used to read a collection outside that scope. Self-provisioning
+    matters — an earlier version depended on a role created by hand, and the
+    suite's own teardown deleted the collections that role was scoped to,
+    leaving the user with no roles and the probe reporting admin_list.
+
+    Using the root key here would prove nothing — root sees everything, and the
+    error would be "collection not found" rather than a denial.
+
+    Needs WEAVIATE_IT_RESTRICTED_KEY to name a *different* valid API key
+    (mapped to a user via AUTHENTICATION_APIKEY_USERS). On an admin_list server
+    nothing is denied at all, so the test skips.
     """
     if store.auth_mode != "rbac":
         pytest.skip("server runs admin_list; no denial to observe")
-    with pytest.raises(PermissionDeniedError):
-        store.search("SomeCollectionThisKeyCannotRead", embedder.embed_one("x"), "x")
+
+    restricted_key = os.environ.get("WEAVIATE_IT_RESTRICTED_KEY", "")
+    restricted_user = os.environ.get("WEAVIATE_IT_RESTRICTED_USER", "reader-user")
+    if not restricted_key:
+        pytest.skip("set WEAVIATE_IT_RESTRICTED_KEY to a second, non-root API key")
+
+    import contextlib
+    import dataclasses
+
+    from weaviate.classes.config import Configure, DataType, Property
+    from weaviate.classes.rbac import Permissions
+
+    client = store.client
+    forbidden = f"Forbidden{uuid.uuid4().hex[:8]}"
+    role = f"itrole{uuid.uuid4().hex[:8]}"
+    allowed = config.collections()[0]
+
+    client.collections.create(
+        name=forbidden,
+        properties=[Property(name="content", data_type=DataType.TEXT)],
+        vector_config=Configure.Vectors.self_provided(),
+    )
+    # Scoped to this run's prefix, which deliberately excludes `forbidden`.
+    client.roles.create(
+        role_name=role,
+        permissions=[
+            Permissions.collections(
+                collection=f"{config.collection_prefix}*", read_config=True
+            ),
+            Permissions.data(collection=f"{config.collection_prefix}*", read=True),
+        ],
+    )
+    client.users.db.assign_roles(user_id=restricted_user, role_names=[role])
+
+    restricted = WeaviateStore(
+        dataclasses.replace(config, api_key=restricted_key),
+        embedder.dims or 768,
+    )
+    try:
+        restricted.connect()
+        assert restricted.auth_mode == "rbac", (
+            "the restricted identity must hold a role, or the probe cannot see RBAC"
+        )
+
+        # In scope: allowed. Proves the role works and the test is not vacuous.
+        # `allowed` is multi-tenant, so this must be tenant-scoped like any
+        # other read against it.
+        restricted.search(allowed, embedder.embed_one("x"), "x", limit=1)
+
+        # Out of scope: must be a typed denial, not a generic failure. The
+        # forbidden collection is single-tenant, so ask for it that way.
+        with pytest.raises(PermissionDeniedError):
+            single_tenant = WeaviateStore(
+                dataclasses.replace(config, api_key=restricted_key, multi_tenancy=False),
+                embedder.dims or 768,
+            )
+            single_tenant.connect()
+            try:
+                single_tenant.search(forbidden, embedder.embed_one("x"), "x", limit=1)
+            finally:
+                single_tenant.close()
+    finally:
+        restricted.close()
+        with contextlib.suppress(Exception):
+            client.users.db.revoke_roles(user_id=restricted_user, role_names=[role])
+        with contextlib.suppress(Exception):
+            client.roles.delete(role_name=role)
+        with contextlib.suppress(Exception):
+            client.collections.delete(forbidden)
