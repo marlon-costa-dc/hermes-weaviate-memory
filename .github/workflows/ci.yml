@@ -35,10 +35,10 @@ jobs:
       - name: Format check
         run: ruff format --check .
 
-      # Unit and contract tests only: integration needs a live Weaviate and
-      # Ollama, and skips rather than passes when they are absent.
-      - name: Unit and contract tests
-        run: pytest tests/test_unit.py tests/test_contract.py -v
+      # Unit, contract and host-integration tests: integration needs a live
+      # Weaviate and Ollama, and skips rather than passes when absent.
+      - name: Unit, contract and host-integration tests
+        run: pytest tests/test_unit.py tests/test_contract.py tests/test_host_integration.py -v
 
   integration:
     runs-on: ubuntu-latest
