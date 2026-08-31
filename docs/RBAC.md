@@ -33,6 +33,20 @@ Set `auth_mode: rbac` or `auth_mode: admin_list` explicitly to skip the probe.
 
 RBAC is enabled server-side; the plugin cannot turn it on.
 
+> **The switch is atomic — admin_list and RBAC cannot both be on.** Verified in
+> Weaviate's own source (`usecases/config/authorization.go`, identical at
+> v1.30.0 and v1.39.0):
+>
+> ```go
+> func (a Authorization) Validate() error {
+>     if a.AdminList.Enabled && a.Rbac.Enabled {
+>         return fmt.Errorf("cannot enable adminlist and rbac at the same time")
+>     }
+> ```
+>
+> The pod refuses to start. Disable one and enable the other in the same
+> change; there is no overlap window to migrate through.
+
 ```yaml
 # values.yaml for the Weaviate Helm chart
 authentication:
@@ -48,13 +62,27 @@ authorization:
     root_users:
       - platform-admin
   admin_list:
-    enabled: false        # mutually exclusive with RBAC
+    enabled: false        # mutually exclusive with RBAC — see above
 env:
   AUTHENTICATION_DB_USERS_ENABLED: "true"   # runtime user management, 1.30+
 ```
 
-> On Weaviate ≤ 1.30.6 and ≤ 1.31.0, enabling RBAC **without** a valid root
-> user prevents startup. Update the root key before rolling the change out.
+> **Env var naming:** the docs use `AUTHORIZATION_ENABLE_RBAC` on some pages
+> and `AUTHORIZATION_RBAC_ENABLED` on others, without qualifying the version.
+> Both work — the source accepts either through a single OR, at both v1.30.0
+> and v1.39.0:
+>
+> ```go
+> if entcfg.Enabled(os.Getenv("AUTHORIZATION_ENABLE_RBAC")) ||
+>    entcfg.Enabled(os.Getenv("AUTHORIZATION_RBAC_ENABLED")) {
+> ```
+
+> **Root user requirement differs by version.** At v1.30.0 the RBAC config
+> validator returns `"at least one root user is required"`, so enabling RBAC
+> without `root_users` prevents startup. At v1.39.0 that validator returns
+> `nil` — it boots without one, though you still need a root identity to
+> administer roles. Update the root key in your secret store *before* rolling
+> the change out either way.
 
 ## Roles
 

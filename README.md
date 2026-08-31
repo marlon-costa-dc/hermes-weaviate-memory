@@ -48,11 +48,38 @@ the write is visible to its owner *and* invisible to everyone else.
 ## Requirements
 
 - Hermes Agent
-- Weaviate 1.25+ (RBAC needs 1.29+, the built-in MCP server needs 1.38+)
+- Weaviate 1.25+ (RBAC needs 1.29+, the built-in MCP server needs 1.37.1+)
 - Ollama with an embedding model (`ollama pull nomic-embed-text`)
 - A **gRPC route** to Weaviate. The v4 client sends queries *and* tenant
   operations over gRPC — a cluster exposing only HTTP cannot serve
   multi-tenancy.
+
+### A note on self-provided vectors and semantic search
+
+This plugin computes embeddings itself and supplies them with every write, so
+the server needs no vectorizer module. That keeps your text on your machine and
+works on any Weaviate.
+
+It has one consequence worth knowing before you also point *other* systems at
+the same collections: a collection with `vectorizer: none` can only be searched
+semantically by a client that brings a query vector. Measured against Weaviate
+1.30.0:
+
+```python
+col.query.hybrid(query="which linux distribution", limit=3)
+# WeaviateQueryError: VectorFromInput was called without vectorizer
+#                     on class ... for input which linux distribution
+
+col.query.bm25(query="CachyOS", limit=3)
+# works
+```
+
+This plugin is unaffected — it always sends a vector. But Weaviate's built-in
+MCP server sends only a query string, so **MCP semantic search over these
+collections needs a server-side vectorizer**; without one it is limited to
+keyword search. If that matters to you, run a vectorizer module (for example
+`text2vec-ollama`, pointing the server at an Ollama it can reach) and create
+the collections with it instead. See [docs/MCP.md](docs/MCP.md).
 
 ## Install
 
