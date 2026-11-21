@@ -110,3 +110,80 @@ Without this, an MCP client sees `MemSemantic` and has to guess.
 
 Below Weaviate 1.37.1 there is no MCP server, and this plugin does not need
 one — it talks to the REST and gRPC APIs directly. MCP is additive.
+
+> The docs are inconsistent about the version: the MCP server page is badged
+> "Added in v1.38" while the env-var reference says the `MCP_SERVER_*`
+> variables arrived in v1.37.1 and became runtime-configurable in v1.38. The
+> variables are absent from the 1.30.0 source and present in 1.39.0.
+
+## The vectorizer requirement — read this before enabling MCP
+
+The MCP search tools take a **query string**, not a vector. On a collection
+created with `vectorizer: none` (this plugin's default, and what
+`self_provided()` produces) Weaviate has no way to embed that string.
+
+Measured through the MCP protocol itself against Weaviate 1.39.0 —
+`tools/call` on `weaviate-query-hybrid`:
+
+```
+collection with vectorizer: none
+  → tool execution failed: failed to execute hybrid search:
+    VectorFromInput was called without vectorizer on class McpByo
+
+collection with text2vec-ollama
+  → {"results":[{"_additional":{"score":0.0125,...},"content":"The oper...
+```
+
+BM25 on the same BYO collection works. So with self-provided vectors, **MCP is
+limited to keyword search** — the semantic half is unavailable, which is
+usually the entire reason for reaching for a vector database. Full log:
+[VERIFICATION.md](VERIFICATION.md).
+
+### Tools actually exposed
+
+With `MCP_SERVER_WRITE_ACCESS_ENABLED=false`, three read-only tools (listed
+via `tools/list` on 1.39.0):
+
+| Tool | Purpose |
+|---|---|
+| `weaviate-collections-get-config` | Retrieves collection configuration(s) |
+| `weaviate-query-hybrid` | Hybrid search (vector + keyword) in a collection |
+| `weaviate-tenants-list` | Lists a collection's tenants |
+
+### Making MCP semantic: a server-side vectorizer
+
+Give the server its own embedder and it can vectorize incoming queries. With
+Ollama reachable from the cluster:
+
+```yaml
+# Weaviate values.yaml
+env:
+  ENABLE_MODULES: "backup-s3,text2vec-ollama"
+```
+
+```python
+from weaviate.classes.config import Configure
+
+client.collections.create(
+    name="MemSemantic",
+    vector_config=Configure.Vectors.text2vec_ollama(
+        api_endpoint="http://ollama.ollama.svc.cluster.local:11434",
+        model="nomic-embed-text",
+    ),
+    ...
+)
+```
+
+Then every consumer shares one vector space:
+
+| Consumer | How it vectorizes | Semantic search |
+|---|---|---|
+| MCP clients | server-side | yes |
+| Other systems (Dify, pipelines) | server-side | yes |
+| This plugin | sends its own vector | yes |
+
+Point the plugin's `embed_model` at the **same model** the server uses.
+Different models produce incompatible vector spaces, and mixing them silently
+degrades recall rather than raising an error.
+
+`nomic-embed-text` is 274 MB and runs on CPU — no GPU node required.

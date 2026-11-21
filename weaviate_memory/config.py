@@ -176,12 +176,19 @@ def load_config(cfg_get=None) -> Config:
     """
 
     def _cfg(key: str, default: Any = None) -> Any:
+        """Read one key, treating an explicit ``None`` as absent.
+
+        Hermes' ``cfg_get`` returns ``None`` for a key that exists in the
+        config tree but has no value, ignoring the default it was handed —
+        so callers must not assume a non-None result.
+        """
         if cfg_get is None:
             return default
         try:
-            return cfg_get(f"plugins.weaviate-memory.{key}", default)
+            value = cfg_get(f"plugins.weaviate-memory.{key}", default)
         except Exception:
             return default
+        return default if value is None else value
 
     env = os.environ.get
     tenant = env("WEAVIATE_MEMORY_TENANT") or _cfg("tenant", "") or default_tenant()

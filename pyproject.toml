@@ -37,7 +37,7 @@ classifiers = [
 dependencies = ["weaviate-client>=4.22,<5"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "pyyaml>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/marlon-costa-dc/hermes-weaviate-memory"

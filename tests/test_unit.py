@@ -82,6 +82,50 @@ class TestConfig:
 
         assert load_config(cfg_get).recall_limit == 5
 
+    def test_cfg_get_returning_none_does_not_crash(self, monkeypatch):
+        """Hermes' cfg_get returns None for a valueless key, ignoring the default.
+
+        Regression guard: loading through Hermes' real plugin loader raised
+        ``AttributeError: 'NoneType' object has no attribute 'strip'`` because
+        load_config trusted cfg_get to honour its default. A test double that
+        echoes the default cannot catch this — this one returns None for
+        everything, exactly as the host does.
+        """
+        for var in (
+            "WEAVIATE_MEMORY_HTTP_HOST",
+            "WEAVIATE_MEMORY_AUTH_MODE",
+            "WEAVIATE_MEMORY_EMBED_MODEL",
+            "WEAVIATE_MEMORY_OLLAMA_HOST",
+            "WEAVIATE_MEMORY_TENANT",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+        cfg = load_config(lambda key, default=None: None)
+
+        assert cfg.auth_mode == "auto"
+        assert cfg.http_host == "127.0.0.1"
+        assert cfg.embed_model == "nomic-embed-text"
+        assert cfg.collection_prefix == "Mem"
+        assert cfg.domains == ("Episodic", "Semantic", "Procedural")
+        assert cfg.tenant.startswith("u_")
+        assert cfg.shared_tenant == "s_shared"
+
+    def test_every_string_field_survives_a_none_returning_host(self):
+        """No string field may end up None — each one is later .strip()ed or joined."""
+        cfg = load_config(lambda key, default=None: None)
+        for name in (
+            "http_host",
+            "grpc_host",
+            "auth_mode",
+            "tenant",
+            "shared_tenant",
+            "collection_prefix",
+            "embed_model",
+            "ollama_host",
+            "api_key",
+        ):
+            assert isinstance(getattr(cfg, name), str), name
+
     def test_default_tenant_is_prefixed(self):
         tenant = default_tenant()
         assert tenant.startswith("u_")
@@ -307,31 +351,46 @@ class TestConfigSchema:
                 assert "minimum" in field and "maximum" in field, field["key"]
 
     def test_save_config_never_writes_the_key(self):
-        """save_config must drop secrets even if handed one."""
-        written = {}
+        """save_config must drop secrets even if handed one.
 
-        provider = WeaviateMemoryProvider(Config())
-        import weaviate_memory
-
-        class FakeConfigModule:
-            @staticmethod
-            def cfg_set(key, value):
-                written[key] = value
-
+        The fake ``hermes_cli.config`` is installed and removed around the
+        call: leaving it in ``sys.modules`` would poison every later import
+        of the real module in the same session (it lacks ``cfg_get``), which
+        silently broke an unrelated test file.
+        """
         import sys
         import types
 
+        written = {}
+        provider = WeaviateMemoryProvider(Config())
+
         fake = types.ModuleType("hermes_cli.config")
-        fake.cfg_set = FakeConfigModule.cfg_set
+        fake.cfg_set = lambda key, value: written.__setitem__(key, value)
         parent = types.ModuleType("hermes_cli")
         parent.config = fake
-        sys.modules.setdefault("hermes_cli", parent)
+
+        had_parent = "hermes_cli" in sys.modules
+        prev_parent = sys.modules.get("hermes_cli")
+        prev_config = sys.modules.get("hermes_cli.config")
+
+        sys.modules["hermes_cli"] = parent
         sys.modules["hermes_cli.config"] = fake
         try:
             provider.save_config({"api_key": "SECRET", "http_host": "h"}, os.getcwd())
         finally:
-            sys.modules.pop("hermes_cli.config", None)
+            if had_parent:
+                sys.modules["hermes_cli"] = prev_parent
+            else:
+                sys.modules.pop("hermes_cli", None)
+            if prev_config is not None:
+                sys.modules["hermes_cli.config"] = prev_config
+            else:
+                sys.modules.pop("hermes_cli.config", None)
 
-        assert not any("api_key" in k for k in written)
+        assert not any("api_key" in key for key in written)
         assert written.get("plugins.weaviate-memory.http_host") == "h"
+
+    def test_version_is_exposed(self):
+        import weaviate_memory
+
         assert weaviate_memory.__version__
